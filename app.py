@@ -63,9 +63,13 @@ def load_teams_from_file() -> dict:
     try:
         if os.path.exists(TEAMS_BACKUP_FILE):
             with open(TEAMS_BACKUP_FILE, "r") as f:
-                return json.load(f) or {}
-    except Exception:
-        pass
+                data = json.load(f) or {}
+                print(f"✅ [DEBUG] Loaded {len(data)} teams from {TEAMS_BACKUP_FILE}", flush=True)
+                return data
+        else:
+            print(f"⚠️ [DEBUG] Teams file not found: {TEAMS_BACKUP_FILE}", flush=True)
+    except Exception as e:
+        print(f"❌ [DEBUG] Error loading teams: {e}", flush=True)
     return {}
 
 def save_teams_to_file(teams: dict):
@@ -73,8 +77,9 @@ def save_teams_to_file(teams: dict):
     try:
         with open(TEAMS_BACKUP_FILE, "w") as f:
             json.dump(teams, f, indent=2)
-    except Exception:
-        pass
+        print(f"✅ [DEBUG] Saved {len(teams)} teams to {TEAMS_BACKUP_FILE}", flush=True)
+    except Exception as e:
+        print(f"❌ [DEBUG] Error saving teams: {e}", flush=True)
 
 def sb_load_teams() -> dict:
     """Load all teams from Supabase. Falls back to local JSON file. Returns {} if both unavailable."""
@@ -230,6 +235,7 @@ if not st.session_state.get("_sb_loaded"):
     st.session_state.teams   = _teams_db   if _teams_db   else {}
     st.session_state.logbook = _logbook_db if _logbook_db else []
     st.session_state._sb_loaded = True
+    print(f"🔄 [SESSION INIT] Loaded {len(st.session_state.teams)} teams, {len(st.session_state.logbook)} log entries", flush=True)
 
 # ── DEBUG: show Supabase status in console ──
 # Uncomment below to debug connection issues:
@@ -469,13 +475,16 @@ def render_sidebar():
 
         st.markdown("<div style='margin-top:0.4rem;'></div>", unsafe_allow_html=True)
         if st.button("🚪  Sign Out", use_container_width=True, key="signout"):
-            # Save current teams to Supabase before clearing session
+            # Save current teams to JSON file before clearing session
+            print(f"📝 [SIGN OUT] Saving {len(st.session_state.get('teams', {}))} teams before logout", flush=True)
             sb_save_teams(st.session_state.get("teams", {}))
 
             # Wipe EVERYTHING — shared + user keys — so next login gets fresh DB data
             keys_to_delete = list(st.session_state.keys())
             for k in keys_to_delete:
                 del st.session_state[k]
+
+            print("🚪 [SIGN OUT] Session cleared, forcing reload", flush=True)
 
             # Force Supabase re-fetch on next page load
             st.session_state._sb_loaded = False
@@ -706,6 +715,7 @@ def render_team_page():
                     }
                     st.session_state.teams        = teams
                     st.session_state.current_team = t_name
+                    print(f"✅ [TEAM CREATE] '{t_name}' created by {user['name']}, total teams now: {len(teams)}", flush=True)
                     sb_save_teams(teams)           # ← persist to JSON file + Supabase
                     st.success(f"✅ Team **{t_name}** created!")
                     st.balloons()
