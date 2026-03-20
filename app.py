@@ -706,9 +706,11 @@ def render_team_page():
                     }
                     st.session_state.teams        = teams
                     st.session_state.current_team = t_name
-                    sb_save_teams(teams)           # ← persist to Supabase
+                    sb_save_teams(teams)           # ← persist to JSON file + Supabase
                     st.success(f"✅ Team **{t_name}** created!")
                     st.balloons()
+                    # Force reload on next run so all users see the new team
+                    st.session_state._sb_loaded = False
                     st.rerun()
 
     # ── JOIN ──
@@ -753,8 +755,10 @@ def render_team_page():
                         teams[t_name]["members"].append(user["name"])
                         teams[t_name]["roles"][user["name"]] = "Member"
                         st.session_state.current_team = t_name
-                        sb_save_teams(st.session_state.teams)  # ← persist to Supabase
+                        sb_save_teams(st.session_state.teams)  # ← persist to JSON file + Supabase
                         st.success(f"✅ Joined **{t_name}**!")
+                        # Force reload so all users see updated team
+                        st.session_state._sb_loaded = False
                         st.rerun()
                 elif st.session_state.current_team != t_name:
                     if st.button(f"Switch to {t_name}", key=f"sw_{t_name}"):
@@ -827,12 +831,14 @@ def render_team_page():
                     if final:
                         team["roles"][target] = final
                         st.session_state.teams[t_name] = team
-                        sb_save_teams(st.session_state.teams)   # ← persist to Supabase
+                        sb_save_teams(st.session_state.teams)   # ← persist to JSON file + Supabase
                         log_c = f"{target} assigned as {final}"
                         add_logbook(log_c, "role", user["name"], t_name)
                         hs_retain(log_c, {"category":"role","author":user["name"],
                                           "timestamp":datetime.datetime.utcnow().isoformat()})
                         st.success(f"✅ {target} → {final}")
+                        # Force reload so all users see role updates
+                        st.session_state._sb_loaded = False
                         st.rerun()
 
 
