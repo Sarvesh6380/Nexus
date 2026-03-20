@@ -159,22 +159,23 @@ _defaults = {
     "current_user":      None,
     "current_team":      None,
     "current_page":      "🏠 Dashboard",
-    # Shared — never cleared on sign out
+    # Shared — always overwritten from Supabase on load
     "teams":             {},
     "logbook":           [],
+    "_sb_loaded":        False,   # default False → guarantees Supabase fetch on every cold start
 }
 
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
-# Load shared data from Supabase — runs on first load AND after sign out
+# Load shared data from Supabase — runs on first load AND after every sign-out
 if not st.session_state.get("_sb_loaded"):
     _teams_db   = sb_load_teams()
     _logbook_db = sb_load_logbook()
-    # Always update from Supabase — even if empty locally
-    st.session_state.teams   = _teams_db   if _teams_db   else st.session_state.teams
-    st.session_state.logbook = _logbook_db if _logbook_db else st.session_state.logbook
+    # Always write from Supabase — this is the cross-user sync point
+    st.session_state.teams   = _teams_db   if _teams_db   else {}
+    st.session_state.logbook = _logbook_db if _logbook_db else []
     st.session_state._sb_loaded = True
 
 # ── DEBUG: show Supabase status in console ──
@@ -412,15 +413,13 @@ def render_sidebar():
             # Save current teams to Supabase before clearing session
             sb_save_teams(st.session_state.get("teams", {}))
 
-            # Clear ONLY user-specific keys
-            # teams & logbook are NOT in _USER_KEYS — they survive
-            for k in _USER_KEYS:
-                if k in st.session_state:
-                    del st.session_state[k]
+            # Wipe EVERYTHING — shared + user keys — so next login gets fresh DB data
+            keys_to_delete = list(st.session_state.keys())
+            for k in keys_to_delete:
+                del st.session_state[k]
 
-            # Reset load flag → next user gets FRESH data from Supabase
+            # Force Supabase re-fetch on next page load
             st.session_state._sb_loaded = False
-            st.session_state.last_retained = None
             st.rerun()
 
 
@@ -655,20 +654,22 @@ def render_team_page():
 
     # ── JOIN ──
     with tab2:
-        if not teams:
-            st.info("No teams yet. Ask your Team Leader to create one first.")
-            # Force reload from Supabase
-            if st.button("🔄 Refresh Teams from Server", key="refresh_join"):
+        # Always offer a refresh — teams created by other users only appear after reload
+        rfc1, rfc2 = st.columns([3, 1])
+        with rfc1:
+            st.markdown('<div style="font-size:0.78rem;color:#5a6278;padding-top:0.5rem;">Teams are loaded from the server. Click Refresh to see teams created by other users.</div>', unsafe_allow_html=True)
+        with rfc2:
+            if st.button("🔄 Refresh", key="refresh_join_top", use_container_width=True):
                 st.session_state._sb_loaded = False
                 fresh = sb_load_teams()
-                if fresh:
-                    st.session_state.teams   = fresh
-                    st.session_state._sb_loaded = True
-                    st.success(f"Found {len(fresh)} teams!")
-                    st.rerun()
-                else:
-                    st.session_state._sb_loaded = True
-                    st.warning("Still no teams found. Ask your leader to create one.")
+                st.session_state.teams = fresh if fresh else {}
+                st.session_state._sb_loaded = True
+                st.rerun()
+
+        teams = st.session_state.teams   # re-read after possible refresh
+
+        if not teams:
+            st.info("No teams yet. Ask your Team Leader to create one first.")
         else:
             for t_name, team in teams.items():
                 already_in = user["name"] in team["members"]
@@ -928,6 +929,21 @@ def render_timeline_page():
 
 def render_teacher_page():
     render_header("Teacher Dashboard", "Monitor all teams and student progress")
+
+    # ── Force fresh load for teacher — they need cross-user data ──
+    tc1, tc2 = st.columns([4, 1])
+    with tc1:
+        st.markdown('<div style="font-size:0.78rem;color:#5a6278;padding:0.3rem 0 0.6rem;">Teacher view shows all teams from the server. Reload to get the latest data.</div>', unsafe_allow_html=True)
+    with tc2:
+        if st.button("🔄 Reload", key="teacher_reload", use_container_width=True):
+            st.session_state._sb_loaded = False
+            fresh_teams = sb_load_teams()
+            fresh_logs  = sb_load_logbook()
+            st.session_state.teams   = fresh_teams if fresh_teams else {}
+            st.session_state.logbook = fresh_logs  if fresh_logs  else []
+            st.session_state._sb_loaded = True
+            st.rerun()
+
     teams   = st.session_state.teams
     logbook = st.session_state.logbook
 
