@@ -127,12 +127,7 @@ for k, v in {
     if k not in st.session_state:
         st.session_state[k] = v
 
-# Load shared data on every page refresh
-_shared_teams, _shared_logbook = load_shared()
-if _shared_teams:
-    st.session_state.teams   = _shared_teams
-if _shared_logbook:
-    st.session_state.logbook = _shared_logbook
+# (shared data loaded after function definitions below)
 
 # ── Helpers ───────────────────────────────────────────────────────
 def get_team():
@@ -241,6 +236,13 @@ def save_logbook_entry(entry: dict):
         }).execute()
     except Exception:
         pass
+
+# ── Load shared data now that functions are defined ──────────────
+_shared_teams, _shared_logbook = load_shared()
+if _shared_teams:
+    st.session_state.teams   = _shared_teams
+if _shared_logbook:
+    st.session_state.logbook = _shared_logbook
 
 # ════════════════════════════════════════════════════════════════
 #  SIDEBAR  — rendered FIRST before any page content
