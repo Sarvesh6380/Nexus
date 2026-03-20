@@ -41,12 +41,21 @@ st.markdown(NEXUS_CSS, unsafe_allow_html=True)
 def _get_sb():
     """Return cached Supabase client or None if not configured."""
     try:
-        url = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
-        key = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
+        # Safely read from st.secrets (Streamlit Cloud) or .env (local)
+        try:
+            url = st.secrets["SUPABASE_URL"]
+        except Exception:
+            url = os.getenv("SUPABASE_URL", "")
+        try:
+            key = st.secrets["SUPABASE_KEY"]
+        except Exception:
+            key = os.getenv("SUPABASE_KEY", "")
+
         if not url or not key:
             return None
         from supabase import create_client
-        return create_client(url, key)
+        client = create_client(url, key)
+        return client
     except Exception:
         return None
 
@@ -57,8 +66,10 @@ def sb_load_teams() -> dict:
         return {}
     try:
         res = sb.table("teams").select("data").limit(1).execute()
-        return res.data[0]["data"] if res.data else {}
-    except Exception:
+        if res.data and res.data[0].get("data"):
+            return res.data[0]["data"]
+        return {}
+    except Exception as e:
         return {}
 
 def sb_save_teams(teams: dict):
@@ -135,15 +146,19 @@ for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
-# Load shared data from Supabase once per browser session
+# Load shared data from Supabase — runs on first load AND after sign out
 if not st.session_state.get("_sb_loaded"):
     _teams_db   = sb_load_teams()
     _logbook_db = sb_load_logbook()
-    if _teams_db:
-        st.session_state.teams   = _teams_db
-    if _logbook_db:
-        st.session_state.logbook = _logbook_db
+    # Always update from Supabase — even if empty locally
+    st.session_state.teams   = _teams_db   if _teams_db   else st.session_state.teams
+    st.session_state.logbook = _logbook_db if _logbook_db else st.session_state.logbook
     st.session_state._sb_loaded = True
+
+# ── DEBUG: show Supabase status in console ──
+# Uncomment below to debug connection issues:
+# import sys
+# print(f"Supabase: {_get_sb() is not None}, Teams: {len(st.session_state.teams)}, Logs: {len(st.session_state.logbook)}", file=sys.stderr)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -369,12 +384,18 @@ def render_sidebar():
 
         st.markdown("<div style='margin-top:0.4rem;'></div>", unsafe_allow_html=True)
         if st.button("🚪  Sign Out", use_container_width=True, key="signout"):
-            # Only clear user-specific keys — teams & logbook survive for next user
+            # Save current teams to Supabase before clearing session
+            sb_save_teams(st.session_state.get("teams", {}))
+
+            # Clear ONLY user-specific keys
+            # teams & logbook are NOT in _USER_KEYS — they survive
             for k in _USER_KEYS:
                 if k in st.session_state:
                     del st.session_state[k]
-            # Force reload from Supabase on next login
+
+            # Reset load flag → next user gets FRESH data from Supabase
             st.session_state._sb_loaded = False
+            st.session_state.last_retained = None
             st.rerun()
 
 
