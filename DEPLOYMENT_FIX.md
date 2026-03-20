@@ -30,29 +30,79 @@
 
 ## 🚀 How to Use
 
-### **Local Development (Recommended for Testing)**
+### **Local Development (With Supabase - RECOMMENDED)**
+
+1. **Copy the template:** 
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Add your credentials to `.env`:**
+   ```
+   GROQ_API_KEY="your-actual-groq-key"
+   SUPABASE_URL="https://your-project.supabase.co"
+   SUPABASE_KEY="your-actual-supabase-key"
+   HINDSIGHT_API_KEY="your-actual-hindsight-key"
+   ```
+
+3. **Run Streamlit:**
+   ```bash
+   streamlit run app.py
+   ```
+
+4. ✅ Teams now persist to both **Supabase** (primary) and **JSON files** (fallback)
+
+### **Local Development (Without Supabase)**
 No setup needed! Just run:
 ```bash
 streamlit run app.py
 ```
-Team data automatically persists to `teams_data.json` and `logbook_data.json`.
+Team data automatically persists to `teams_data.json` and `logbook_data.json` (local files only).
 
-### **Streamlit Cloud (With Supabase)**
-1. Go to your Streamlit app settings
-2. Add secrets (click **Secrets** dropdown):
+### **Streamlit Cloud (With Supabase) - PRODUCTION**
+1. Go to your Streamlit app settings → **Secrets**
+2. Add these secrets:
    ```toml
    SUPABASE_URL = "https://your-project.supabase.co"
    SUPABASE_KEY = "your-anon-key"
    GROQ_API_KEY = "your-groq-key"
-   HINDSIGHT_API_KEY = "your-hindsight-key"
+   HINDSIGHT_API_KEY = "your-hindsight-key"  
    ```
 3. Push to GitHub—Streamlit will auto-deploy
-4. Data now syncs with Supabase ✅
+4. ✅ Data persists in Supabase (production-grade)
 
-### **Streamlit Cloud (Without Supabase)**
-- Don't add Supabase secrets
-- Data persists to local JSON files (within Streamlit filesystem)
-- ⚠️ **Note:** Streamlit Cloud may clear files between deployments—Supabase is recommended for production
+## 🗄️ Supabase Setup (Optional but Recommended)
+
+### Create Supabase Tables
+
+If using Supabase, create these two tables in your Supabase project:
+
+#### **Table 1: `teams`**
+```sql
+CREATE TABLE teams (
+  id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  data JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+#### **Table 2: `logbook`**
+```sql
+CREATE TABLE logbook (
+  id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  team TEXT,
+  author TEXT,
+  content TEXT,
+  category TEXT DEFAULT 'general',
+  timestamp TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+Then get your credentials from Supabase:
+- **Project URL:** Settings → General → Project URL
+- **Anon Key:** Settings → API → Project API keys → anon public
 
 ## 📋 Changes Made
 
@@ -60,6 +110,8 @@ Team data automatically persists to `teams_data.json` and `logbook_data.json`.
 |------|---------|
 | `app.py` | Added fallback file persistence for teams & logbook |
 | `.gitignore` | Added `teams_data.json`, `logbook_data.json` |
+| `.env.example` | Template showing required credentials |
+| `DEPLOYMENT_FIX.md` | Setup and troubleshooting guide |
 
 ## 🧪 Test It
 
@@ -72,18 +124,27 @@ Team data automatically persists to `teams_data.json` and `logbook_data.json`.
 ## 🔧 Troubleshooting
 
 **Teams still not persisting?**
-- Check if `teams_data.json` is being created (should be in repo root)
-- If it exists but is empty `{}`, all teams were deleted
-- Check sidebar—it shows "Supabase ✅ / ⬜ / ❌" status
 
-**Want to use Supabase in production?**
-1. Create free Supabase project at https://supabase.com
-2. Create tables `teams` and `logbook` with column `data` (JSONB) for teams
-3. Add URL and API key to Streamlit secrets
+1. **Check if .env credentials are set:**
+   ```bash
+   cat .env
+   ```
+   Should show `SUPABASE_URL` and `SUPABASE_KEY` (not empty)
 
-## 📝 Notes
+2. **Check if JSON files are being created:**
+   ```bash
+   ls -la *.json
+   ```
+   Should show `teams_data.json` and `logbook_data.json`
 
-- Data is now **always persisted** (local files as minimum)
-- No more silent failures—exceptions are logged
-- Backward compatible—existing Supabase setups still work
-- Multi-user sessions now work correctly across sign-out/sign-in
+3. **Check Streamlit terminal for debug logs:**
+   Look for these messages:
+   - ✅ `[DEBUG] Saved N teams to ...` = File saving works
+   - ✅ `[DEBUG] Loaded N teams from ...` = File loading works
+   - ❌ If you see 0 teams always = Something is clearing data
+
+4. **In Streamlit app sidebar:**
+   Shows "Supabase ✅ / ⬜ / ❌" status
+   - ✅ = Supabase connected
+   - ❌ = Supabase not configured (use JSON files)
+   - ⬜ = Hindsight not configured (optional)
