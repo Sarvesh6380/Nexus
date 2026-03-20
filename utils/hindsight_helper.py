@@ -1,5 +1,6 @@
 """
 utils/hindsight_helper.py — All Hindsight retain/recall helpers for Nexus.
+Package: pip install hindsight-client
 """
 
 import datetime
@@ -7,30 +8,21 @@ import streamlit as st
 from config import HINDSIGHT_API_URL, HINDSIGHT_BANK_ID
 
 
-# ── Cached client ──────────────────────────────────────────────
-
 @st.cache_resource
 def get_hindsight_client():
-    """
-    Try to connect to Hindsight. Returns None silently if not available.
-    Install: pip install hindsight-client
-    """
+    """Instantiate and cache a Hindsight client."""
     try:
         from hindsight_client import Hindsight
         return Hindsight(base_url=HINDSIGHT_API_URL)
-    except ImportError:
-        return None   # package not installed — silent, app works without it
-    except Exception:
-        return None   # backend not running — silent
+    except Exception as e:
+        st.error(f"Hindsight init error: {e}")
+        return None
 
-
-# ── Core Operations ────────────────────────────────────────────
 
 def hs_retain(content: str, metadata: dict) -> object | None:
     """
     Save a memory to Hindsight.
-    Encodes category + author directly into content string so
-    they remain searchable and recoverable after recall().
+    Encodes category + author into content string for searchability.
     """
     hs = get_hindsight_client()
     if hs is None:
@@ -40,51 +32,40 @@ def hs_retain(content: str, metadata: dict) -> object | None:
         category = metadata.get("category", "general")
         author   = metadata.get("author",   "Team")
         enriched = f"[{category.upper()}] (by {author}) {content}"
-        result   = hs.retain(
+        return hs.retain(
             bank_id   = HINDSIGHT_BANK_ID,
             content   = enriched,
             context   = category,
             timestamp = ts,
         )
-        return result
     except Exception as e:
-        return None  # Hindsight unavailable
+        st.warning(f"Hindsight retain error: {e}")
         return None
 
 
 def hs_recall(query: str, top_k: int = 5) -> list:
-    """
-    Retrieve semantically relevant memories for a query.
-    Returns list of dicts: [{"content": str, "timestamp": str}, ...]
-    """
+    """Retrieve semantically relevant memories for a query."""
     hs = get_hindsight_client()
     if hs is None:
         return []
     try:
-        resp = hs.recall(
-            bank_id = HINDSIGHT_BANK_ID,
-            query   = query,
-        )
-        raw      = getattr(resp, "results", resp) or []
+        resp = hs.recall(bank_id=HINDSIGHT_BANK_ID, query=query)
+        raw  = getattr(resp, "results", resp) or []
         memories = []
         for r in raw[:top_k]:
             if isinstance(r, dict):
-                text = r.get("text", "")
-                ts   = r.get("timestamp", "")
+                text, ts = r.get("text", ""), r.get("timestamp", "")
             else:
-                text = getattr(r, "text", str(r))
-                ts   = getattr(r, "timestamp", "")
+                text, ts = getattr(r, "text", str(r)), getattr(r, "timestamp", "")
             memories.append({"content": text, "timestamp": ts})
         return memories
     except Exception as e:
-        return []   # Hindsight unavailable
+        st.warning(f"Hindsight recall error: {e}")
         return []
 
 
 def hs_recent(top_k: int = 5) -> list:
-    """
-    Fetch recent memories for the Truth Timeline.
-    """
+    """Fetch recent memories for the Truth Timeline."""
     return hs_recall(
         "project decision task role update assignment deadline",
         top_k=top_k,
@@ -93,7 +74,7 @@ def hs_recent(top_k: int = 5) -> list:
 
 def parse_memory_meta(mem: dict) -> dict:
     """
-    Extract category, author, timestamp from enriched memory string.
+    Unpack category, author, timestamp from enriched memory string.
     Format: [CATEGORY] (by AUTHOR) <original text>
     """
     content  = mem.get("content", "")
