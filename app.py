@@ -35,8 +35,10 @@ st.markdown(NEXUS_CSS, unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════
-#  SUPABASE — Shared persistent storage across all users/sessions
+#  PERSISTENCE — Supabase + Local File Fallback
 # ════════════════════════════════════════════════════════════════
+
+TEAMS_BACKUP_FILE = "teams_data.json"
 
 @st.cache_resource
 def _get_sb():
@@ -53,61 +55,111 @@ def _get_sb():
     except Exception:
         return None
 
-def sb_load_teams() -> dict:
-    """Load all teams from Supabase. Returns {} if unavailable."""
-    sb = _get_sb()
-    if sb is None:
-        return {}
+def load_teams_from_file() -> dict:
+    """Load teams from local JSON file (fallback when Supabase unavailable)."""
     try:
-        res = sb.table("teams").select("data").limit(1).execute()
-        if res.data and res.data[0].get("data"):
-            return res.data[0]["data"]
-        return {}
-    except Exception as e:
-        return {}
+        if os.path.exists(TEAMS_BACKUP_FILE):
+            with open(TEAMS_BACKUP_FILE, "r") as f:
+                return json.load(f) or {}
+    except Exception:
+        pass
+    return {}
+
+def save_teams_to_file(teams: dict):
+    """Save teams to local JSON file (fallback when Supabase unavailable)."""
+    try:
+        with open(TEAMS_BACKUP_FILE, "w") as f:
+            json.dump(teams, f, indent=2)
+    except Exception:
+        pass
+
+def sb_load_teams() -> dict:
+    """Load all teams from Supabase. Falls back to local JSON file. Returns {} if both unavailable."""
+    sb = _get_sb()
+    if sb is not None:
+        try:
+            res = sb.table("teams").select("data").limit(1).execute()
+            if res.data and res.data[0].get("data"):
+                return res.data[0]["data"]
+        except Exception as e:
+            pass  # Fall through to file backup
+    # Fallback to local file
+    return load_teams_from_file()
 
 def sb_save_teams(teams: dict):
-    """Upsert teams dict into Supabase."""
+    """Upsert teams dict into Supabase AND save to local file as backup."""
+    # Always save to local file (fast, reliable)
+    save_teams_to_file(teams)
+    
+    # Try Supabase
     sb = _get_sb()
-    if sb is None:
-        return
+    if sb is not None:
+        try:
+            res = sb.table("teams").select("id").limit(1).execute()
+            if res.data:
+                sb.table("teams").update({"data": teams}).eq("id", res.data[0]["id"]).execute()
+            else:
+                sb.table("teams").insert({"data": teams}).execute()
+        except Exception:
+            pass
+
+LOGBOOK_BACKUP_FILE = "logbook_data.json"
+
+def load_logbook_from_file() -> list:
+    """Load logbook from local JSON file (fallback)."""
     try:
-        res = sb.table("teams").select("id").limit(1).execute()
-        if res.data:
-            sb.table("teams").update({"data": teams}).eq("id", res.data[0]["id"]).execute()
-        else:
-            sb.table("teams").insert({"data": teams}).execute()
+        if os.path.exists(LOGBOOK_BACKUP_FILE):
+            with open(LOGBOOK_BACKUP_FILE, "r") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+def save_logbook_to_file(logbook: list):
+    """Save logbook to local JSON file (fallback)."""
+    try:
+        with open(LOGBOOK_BACKUP_FILE, "w") as f:
+            json.dump(logbook, f, indent=2)
     except Exception:
         pass
 
 def sb_load_logbook() -> list:
-    """Load all logbook entries from Supabase. Returns [] if unavailable."""
+    """Load all logbook entries from Supabase. Falls back to local file. Returns [] if both unavailable."""
     sb = _get_sb()
-    if sb is None:
-        return []
-    try:
-        res = sb.table("logbook").select(
-            "team,author,content,category,timestamp"
-        ).order("id").execute()
-        return res.data or []
-    except Exception:
-        return []
+    if sb is not None:
+        try:
+            res = sb.table("logbook").select(
+                "team,author,content,category,timestamp"
+            ).order("id").execute()
+            return res.data or []
+        except Exception:
+            pass  # Fall through to file backup
+    # Fallback to local file
+    return load_logbook_from_file()
 
 def sb_save_log_entry(entry: dict):
-    """Insert a single logbook entry into Supabase immediately."""
+    """Insert a single logbook entry AND save all logbook to local file as backup."""
+    # Load current logbook, add entry, save to file
+    current_logbook = st.session_state.get("logbook", [])
+    if entry not in current_logbook:
+        current_logbook.append(entry)
+        save_logbook_to_file(current_logbook)
+    
+    # Try Supabase
     sb = _get_sb()
-    if sb is None:
-        return
-    try:
-        sb.table("logbook").insert({
-            "team":      entry.get("team",      ""),
-            "author":    entry.get("author",    ""),
-            "content":   entry.get("content",   ""),
-            "category":  entry.get("category",  "general"),
-            "timestamp": entry.get("timestamp", ""),
-        }).execute()
-    except Exception:
-        pass
+    if sb is not None:
+        try:
+            sb.table("logbook").insert({
+                "team":      entry.get("team",      ""),
+                "author":    entry.get("author",    ""),
+                "content":   entry.get("content",   ""),
+                "category":  entry.get("category",  "general"),
+                "timestamp": entry.get("timestamp", ""),
+            }).execute()
+        except Exception:
+            pass
+
 
 
 def sb_debug_status() -> dict:
