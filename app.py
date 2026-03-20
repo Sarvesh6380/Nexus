@@ -38,7 +38,10 @@ st.markdown(NEXUS_CSS, unsafe_allow_html=True)
 #  PERSISTENCE — Supabase + Local File Fallback
 # ════════════════════════════════════════════════════════════════
 
-TEAMS_BACKUP_FILE = "teams_data.json"
+# Use absolute paths for reliable file access across all environments
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TEAMS_BACKUP_FILE = os.path.join(_SCRIPT_DIR, "teams_data.json")
+LOGBOOK_BACKUP_FILE = os.path.join(_SCRIPT_DIR, "logbook_data.json")
 
 @st.cache_resource
 def _get_sb():
@@ -102,8 +105,6 @@ def sb_save_teams(teams: dict):
                 sb.table("teams").insert({"data": teams}).execute()
         except Exception:
             pass
-
-LOGBOOK_BACKUP_FILE = "logbook_data.json"
 
 def load_logbook_from_file() -> list:
     """Load logbook from local JSON file (fallback)."""
@@ -451,11 +452,17 @@ def render_sidebar():
         hs_ok   = "✅" if HINDSIGHT_API_KEY else "⬜"
         sb_ok   = "✅" if (SUPABASE_URL and SUPABASE_KEY) else "❌"
         teams_count = len(st.session_state.get("teams", {}))
+        
+        # Check if local JSON files exist
+        teams_file_exists = "✅" if os.path.exists(TEAMS_BACKUP_FILE) else "❌"
+        logbook_file_exists = "✅" if os.path.exists(LOGBOOK_BACKUP_FILE) else "❌"
+        
         st.markdown(f"""
         <div style="font-size:0.65rem;color:rgba(255,255,255,0.25);line-height:2;">
             Groq {groq_ok} &nbsp; Hindsight {hs_ok} &nbsp; Supabase {sb_ok}<br>
             <span style="color:rgba(255,255,255,0.15);">
-            Teams in DB: {teams_count} · {GROQ_MODEL.split("-")[0].upper()}
+            Teams in DB: {teams_count} · {GROQ_MODEL.split("-")[0].upper()}<br>
+            Files: Teams {teams_file_exists} · Logbook {logbook_file_exists}
             </span>
         </div>
         """, unsafe_allow_html=True)
@@ -1011,6 +1018,44 @@ def render_teacher_page():
             c1.metric("Teams in DB",   dbg["teams_rows"])
             c2.metric("Log entries",   dbg["log_rows"])
             st.success("✅ Supabase is connected and working!")
+        else:
+            st.warning("⚠️ Supabase not connected. Using local JSON files for storage.")
+    
+    # ── Local File Debug Panel ──
+    with st.expander("📁 Local File Storage Status", expanded=False):
+        file_col1, file_col2 = st.columns(2)
+        with file_col1:
+            st.write("**Teams File**")
+            st.code(TEAMS_BACKUP_FILE)
+            if os.path.exists(TEAMS_BACKUP_FILE):
+                st.success("✅ File exists")
+                try:
+                    with open(TEAMS_BACKUP_FILE, "r") as f:
+                        teams_data = json.load(f)
+                    st.metric("Teams count", len(teams_data))
+                    st.json(teams_data)
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+            else:
+                st.warning("❌ File doesn't exist yet")
+        
+        with file_col2:
+            st.write("**Logbook File**")
+            st.code(LOGBOOK_BACKUP_FILE)
+            if os.path.exists(LOGBOOK_BACKUP_FILE):
+                st.success("✅ File exists")
+                try:
+                    with open(LOGBOOK_BACKUP_FILE, "r") as f:
+                        logbook_data = json.load(f)
+                    st.metric("Entries count", len(logbook_data))
+                    if logbook_data:
+                        st.json(logbook_data[:3])  # Show first 3 entries
+                        if len(logbook_data) > 3:
+                            st.caption(f"... and {len(logbook_data) - 3} more entries")
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+            else:
+                st.warning("❌ File doesn't exist yet")
         elif dbg["error"]:
             st.error(f"❌ Error: {dbg['error']}")
             st.info("Check your SUPABASE_URL and SUPABASE_KEY in Streamlit secrets.")
