@@ -118,16 +118,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Session state ─────────────────────────────────────────────────
-for k, v in {
+# USER session keys — cleared on sign out
+_user_keys = {
     "chat_history": [], "conflict_info": None, "last_retained": None,
     "timeline_memories": [], "_pending_content": None, "_pending_meta": None,
     "current_user": None, "current_team": None,
-    "teams": {}, "logbook": [], "current_page": "🏠 Dashboard",
-}.items():
+    "current_page": "🏠 Dashboard",
+}
+# SHARED app keys — NEVER cleared on sign out (survive across users)
+_shared_keys = {
+    "teams": {},
+    "logbook": [],
+}
+for k, v in {**_user_keys, **_shared_keys}.items():
     if k not in st.session_state:
         st.session_state[k] = v
-
-# (shared data loaded after function definitions below)
 
 # ── Helpers ───────────────────────────────────────────────────────
 def get_team():
@@ -237,12 +242,15 @@ def save_logbook_entry(entry: dict):
     except Exception:
         pass
 
-# ── Load shared data now that functions are defined ──────────────
-_shared_teams, _shared_logbook = load_shared()
-if _shared_teams:
-    st.session_state.teams   = _shared_teams
-if _shared_logbook:
-    st.session_state.logbook = _shared_logbook
+# ── Load shared data from Supabase (only once per session) ───────
+# Uses a flag so we don't re-fetch on every Streamlit rerun
+if not st.session_state.get("_shared_loaded"):
+    _shared_teams, _shared_logbook = load_shared()
+    if _shared_teams:
+        st.session_state.teams   = _shared_teams
+    if _shared_logbook:
+        st.session_state.logbook = _shared_logbook
+    st.session_state._shared_loaded = True
 
 # ════════════════════════════════════════════════════════════════
 #  SIDEBAR  — rendered FIRST before any page content
@@ -356,8 +364,17 @@ def render_sidebar():
             unsafe_allow_html=True,
         )
         if st.button("🚪 Sign Out", use_container_width=True, key="signout"):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
+            # Only clear USER session keys — teams & logbook survive for next user
+            _user_session_keys = [
+                "chat_history", "conflict_info", "last_retained",
+                "timeline_memories", "_pending_content", "_pending_meta",
+                "current_user", "current_team", "current_page",
+            ]
+            for k in _user_session_keys:
+                if k in st.session_state:
+                    del st.session_state[k]
+            # Force reload shared data for next user
+            st.session_state._shared_loaded = False
             st.rerun()
 
 
