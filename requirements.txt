@@ -1,11 +1,5 @@
-# ── Nexus — Requirements ──────────────────────────────────────
-# Install all dependencies with:
-#   pip install -r requirements.txt
-# ── Core UI ───────────────────────────────────────────────────
 streamlit>=1.35.0
-# ── LLM — Groq (qwen-32b-preview) ────────────────────────────
 groq>=0.9.0
-# ── Memory — Hindsight ────────────────────────────────────────
 hindsight-client>=0.1.0
-# ── Environment Variables ─────────────────────────────────────
 python-dotenv>=1.0.0
+supabase>=2.0.0

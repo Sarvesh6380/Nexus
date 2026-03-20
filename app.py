@@ -8,6 +8,7 @@ import streamlit as st
 from config import (
     GROQ_API_KEY, HINDSIGHT_API_KEY, HINDSIGHT_API_URL,
     HINDSIGHT_BANK_ID, GROQ_MODEL, VALID_CATEGORIES, VALID_CATS_SET,
+    SUPABASE_URL, SUPABASE_KEY,
 )
 from utils.styles import NEXUS_CSS
 from utils.hindsight_helper import hs_retain, hs_recall, hs_recent, parse_memory_meta
@@ -126,6 +127,13 @@ for k, v in {
     if k not in st.session_state:
         st.session_state[k] = v
 
+# Load shared data on every page refresh
+_shared_teams, _shared_logbook = load_shared()
+if _shared_teams:
+    st.session_state.teams   = _shared_teams
+if _shared_logbook:
+    st.session_state.logbook = _shared_logbook
+
 # ── Helpers ───────────────────────────────────────────────────────
 def get_team():
     t = st.session_state.current_team
@@ -143,11 +151,13 @@ def is_logged_in():
     return st.session_state.current_user is not None
 
 def add_logbook(content, category, author, team):
-    st.session_state.logbook.append({
+    entry = {
         "team": team, "author": author, "content": content,
         "category": category,
         "timestamp": datetime.datetime.utcnow().strftime("%b %d %Y · %H:%M UTC"),
-    })
+    }
+    st.session_state.logbook.append(entry)
+    save_logbook_entry(entry)
 
 def dot_color(cat):
     return {"decision":"#7c6fff","task":"#00c896","role":"#ff6b47",
@@ -166,6 +176,71 @@ def role_emoji(role):
     if "teacher"  in r: return "🎓"
     if "test" in r or "qa" in r: return "🧪"
     return "💼"
+
+# ── Shared Storage (Supabase — persists across sessions & deployments) ──
+import json
+
+@st.cache_resource
+def get_supabase():
+    """Get cached Supabase client."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        from supabase import create_client
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception:
+        return None
+
+def load_shared():
+    """Load teams + logbook from Supabase."""
+    sb = get_supabase()
+    if sb is None:
+        return {}, []
+    try:
+        # Load teams
+        t_res = sb.table("teams").select("data").limit(1).execute()
+        teams = t_res.data[0]["data"] if t_res.data else {}
+
+        # Load logbook
+        l_res = sb.table("logbook").select("*").order("id").execute()
+        logbook = [
+            {k: v for k, v in row.items() if k != "id"}
+            for row in (l_res.data or [])
+        ]
+        return teams, logbook
+    except Exception:
+        return {}, []
+
+def save_shared():
+    """Save teams + logbook to Supabase."""
+    sb = get_supabase()
+    if sb is None:
+        return
+    try:
+        # Upsert teams
+        t_res = sb.table("teams").select("id").limit(1).execute()
+        if t_res.data:
+            sb.table("teams").update({"data": st.session_state.teams}).eq("id", t_res.data[0]["id"]).execute()
+        else:
+            sb.table("teams").insert({"data": st.session_state.teams}).execute()
+    except Exception:
+        pass
+
+def save_logbook_entry(entry: dict):
+    """Save a single logbook entry to Supabase."""
+    sb = get_supabase()
+    if sb is None:
+        return
+    try:
+        sb.table("logbook").insert({
+            "team":      entry.get("team", ""),
+            "author":    entry.get("author", ""),
+            "content":   entry.get("content", ""),
+            "category":  entry.get("category", "general"),
+            "timestamp": entry.get("timestamp", ""),
+        }).execute()
+    except Exception:
+        pass
 
 # ════════════════════════════════════════════════════════════════
 #  SIDEBAR  — rendered FIRST before any page content
@@ -500,6 +575,7 @@ def render_team_page():
                     }
                     st.session_state.teams        = teams
                     st.session_state.current_team = t_name
+                    save_shared()
                     st.success(f"✅ Team **{t_name}** created!")
                     st.balloons(); st.rerun()
 
@@ -523,6 +599,7 @@ def render_team_page():
                         teams[t_name]["members"].append(user["name"])
                         teams[t_name]["roles"][user["name"]] = "Member"
                         st.session_state.current_team = t_name
+                        save_shared()
                         st.success(f"✅ Joined {t_name}!"); st.rerun()
                 elif st.session_state.current_team != t_name:
                     if st.button(f"Switch to {t_name}", key=f"sw_{t_name}"):
@@ -579,6 +656,7 @@ def render_team_page():
                         hs_retain(f"{target} assigned as {final}",
                                   {"category":"role","author":user["name"],
                                    "timestamp":datetime.datetime.utcnow().isoformat()})
+                        save_shared()
                         st.success(f"✅ {target} → {final}"); st.rerun()
 
 
