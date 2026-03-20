@@ -15,6 +15,7 @@ import streamlit as st
 from config import (
     GROQ_API_KEY, HINDSIGHT_API_KEY, HINDSIGHT_API_URL,
     HINDSIGHT_BANK_ID, GROQ_MODEL, VALID_CATEGORIES, VALID_CATS_SET,
+    SUPABASE_URL, SUPABASE_KEY,
 )
 from utils.styles import NEXUS_CSS
 from utils.hindsight_helper import hs_retain, hs_recall, hs_recent, parse_memory_meta
@@ -39,23 +40,16 @@ st.markdown(NEXUS_CSS, unsafe_allow_html=True)
 
 @st.cache_resource
 def _get_sb():
-    """Return cached Supabase client or None if not configured."""
+    """
+    Return cached Supabase client.
+    Uses SUPABASE_URL/KEY from config.py which already handles
+    st.secrets (Streamlit Cloud) and .env (local) automatically.
+    """
     try:
-        # Safely read from st.secrets (Streamlit Cloud) or .env (local)
-        try:
-            url = st.secrets["SUPABASE_URL"]
-        except Exception:
-            url = os.getenv("SUPABASE_URL", "")
-        try:
-            key = st.secrets["SUPABASE_KEY"]
-        except Exception:
-            key = os.getenv("SUPABASE_KEY", "")
-
-        if not url or not key:
+        if not SUPABASE_URL or not SUPABASE_KEY:
             return None
         from supabase import create_client
-        client = create_client(url, key)
-        return client
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception:
         return None
 
@@ -114,6 +108,34 @@ def sb_save_log_entry(entry: dict):
         }).execute()
     except Exception:
         pass
+
+
+def sb_debug_status() -> dict:
+    """
+    Returns a dict with full Supabase connection status for debugging.
+    Shown in Teacher View and sidebar.
+    """
+    status = {
+        "url_set":    bool(SUPABASE_URL),
+        "key_set":    bool(SUPABASE_KEY),
+        "connected":  False,
+        "teams_rows": 0,
+        "log_rows":   0,
+        "error":      "",
+    }
+    sb = _get_sb()
+    if sb is None:
+        status["error"] = "Client is None — check URL/KEY"
+        return status
+    try:
+        t = sb.table("teams").select("id").execute()
+        l = sb.table("logbook").select("id", count="exact").execute()
+        status["connected"]  = True
+        status["teams_rows"] = len(t.data) if t.data else 0
+        status["log_rows"]   = l.count if hasattr(l, "count") else 0
+    except Exception as e:
+        status["error"] = str(e)
+    return status
 
 
 # ════════════════════════════════════════════════════════════════
@@ -372,13 +394,16 @@ def render_sidebar():
 
         # Footer
         st.markdown("---")
-        sb_status = "✅" if _get_sb() else "⬜"
+        groq_ok = "✅" if GROQ_API_KEY else "❌"
+        hs_ok   = "✅" if HINDSIGHT_API_KEY else "⬜"
+        sb_ok   = "✅" if (SUPABASE_URL and SUPABASE_KEY) else "❌"
+        teams_count = len(st.session_state.get("teams", {}))
         st.markdown(f"""
-        <div style="font-size:0.65rem;color:rgba(255,255,255,0.2);line-height:1.9;">
-            🤖 {GROQ_MODEL.split('-')[0].upper()}<br>
-            Groq {'✅' if GROQ_API_KEY else '❌'} &nbsp;
-            Hindsight {'✅' if HINDSIGHT_API_KEY else '⬜'} &nbsp;
-            Supabase {sb_status}
+        <div style="font-size:0.65rem;color:rgba(255,255,255,0.25);line-height:2;">
+            Groq {groq_ok} &nbsp; Hindsight {hs_ok} &nbsp; Supabase {sb_ok}<br>
+            <span style="color:rgba(255,255,255,0.15);">
+            Teams in DB: {teams_count} · {GROQ_MODEL.split("-")[0].upper()}
+            </span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -632,6 +657,18 @@ def render_team_page():
     with tab2:
         if not teams:
             st.info("No teams yet. Ask your Team Leader to create one first.")
+            # Force reload from Supabase
+            if st.button("🔄 Refresh Teams from Server", key="refresh_join"):
+                st.session_state._sb_loaded = False
+                fresh = sb_load_teams()
+                if fresh:
+                    st.session_state.teams   = fresh
+                    st.session_state._sb_loaded = True
+                    st.success(f"Found {len(fresh)} teams!")
+                    st.rerun()
+                else:
+                    st.session_state._sb_loaded = True
+                    st.warning("Still no teams found. Ask your leader to create one.")
         else:
             for t_name, team in teams.items():
                 already_in = user["name"] in team["members"]
@@ -893,6 +930,40 @@ def render_teacher_page():
     render_header("Teacher Dashboard", "Monitor all teams and student progress")
     teams   = st.session_state.teams
     logbook = st.session_state.logbook
+
+    # ── Supabase Debug Panel (always visible to teacher) ──
+    with st.expander("🔌 Supabase Connection Status", expanded=not bool(teams)):
+        dbg = sb_debug_status()
+        col1, col2, col3 = st.columns(3)
+        col1.metric("URL Set",    "✅ Yes" if dbg["url_set"]   else "❌ No")
+        col2.metric("Key Set",    "✅ Yes" if dbg["key_set"]   else "❌ No")
+        col3.metric("Connected",  "✅ Yes" if dbg["connected"] else "❌ No")
+        if dbg["connected"]:
+            c1, c2 = st.columns(2)
+            c1.metric("Teams in DB",   dbg["teams_rows"])
+            c2.metric("Log entries",   dbg["log_rows"])
+            st.success("✅ Supabase is connected and working!")
+        elif dbg["error"]:
+            st.error(f"❌ Error: {dbg['error']}")
+            st.info("Check your SUPABASE_URL and SUPABASE_KEY in Streamlit secrets.")
+        else:
+            st.warning("⬜ Supabase not configured. Add SUPABASE_URL and SUPABASE_KEY to Streamlit secrets.")
+            st.code("""
+# Add these to Streamlit Cloud → Settings → Secrets:
+SUPABASE_URL = "https://xxxxxxxxxxxx.supabase.co"
+SUPABASE_KEY = "your_anon_public_key_here"
+            """, language="toml")
+
+        # Manual force-reload button
+        if st.button("🔄 Force Reload from Supabase", key="force_reload"):
+            st.session_state._sb_loaded = False
+            fresh_teams = sb_load_teams()
+            fresh_logs  = sb_load_logbook()
+            st.session_state.teams   = fresh_teams
+            st.session_state.logbook = fresh_logs
+            st.session_state._sb_loaded = True
+            st.success(f"Reloaded! Found {len(fresh_teams)} teams, {len(fresh_logs)} log entries.")
+            st.rerun()
 
     if not teams:
         st.markdown("""
